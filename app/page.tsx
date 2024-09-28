@@ -1,3 +1,4 @@
+import { FeedPage } from "@/components/component/FeedPage";
 import FeedCard from "@/components/FeedCard";
 import { pb } from "@/lib/pbClient";
 import { FeedItem } from "@/lib/types";
@@ -31,11 +32,13 @@ export default async function Home() {
   
   return (
     <div className="px-2">
-      <div className="flex flex-col gap-3 justify-around py-3">
+      {/* <div className="flex flex-col gap-3 justify-around py-3">
         {posts.map((item) => (
           <FeedCard key={item.id} data={item} upvotes={upvotes} />
         ))}
       </div>
+    </div> */}\
+    <FeedPage/>
     </div>
   );
 }

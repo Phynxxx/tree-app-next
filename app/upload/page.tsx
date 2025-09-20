@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import {
   Form,
   FormControl,
@@ -16,11 +16,17 @@ import { pb } from "@/lib/pbClient";
 import { useUserStore } from "@/lib/stores/user";
 import { zodResolver } from "@hookform/resolvers/zod";
 import Image from "next/image";
-import Link from "next/link";
 import { useState, useCallback, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import Webcam from "react-webcam";
+import { useActiveAccount, useAutoConnect } from "thirdweb/react";
+import { safeMint } from "@/thirdweb/43113/0xdcee2dd10dd46086cc1d2b0825a11ffc990e6eff";
+import { nftreeContract } from "@/lib/web3";
+import { client } from "@/lib/thirdWebClient";
+import { Wallet, createWallet, inAppWallet } from "thirdweb/wallets";
+import { sendAndConfirmTransaction } from "thirdweb";
+import { useRouter } from "next/navigation";
 
 // Utility function to convert data URL to Blob
 const dataURLToBlob = (dataURL: string): Blob => {
@@ -50,6 +56,9 @@ const videoConstraints = {
   facingMode: "user", // Initial facing mode is the front camera
 };
 
+const treeUUID = crypto.randomUUID();
+let wallet: Wallet;
+
 function Page() {
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -62,6 +71,9 @@ function Page() {
   const [selectedFile, setSelectedFile] = useState<Blob>();
   const [latitude, setLatitude] = useState<string>("");
   const [longitude, setLongitude] = useState<string>("");
+  const [submitted, setSubmitted] = useState(false);
+
+  const router = useRouter();
 
   console.log(`lat:${latitude}, long: ${longitude}`);
 
@@ -102,16 +114,40 @@ function Page() {
 
   const user = useUserStore((state) => state.user);
 
+  const { data: autoConnected, isLoading } = useAutoConnect({
+    client: client,
+    onConnect: (w: Wallet) => {
+      wallet = w;
+    },
+    wallets: [
+      inAppWallet(),
+      createWallet("app.core"),
+      createWallet("io.metamask"),
+    ],
+  });
+
+  const activeAccount = useActiveAccount();
+
   const onSubmit = async (data: z.infer<typeof formSchema>) => {
     if (selectedFile) {
-      const formData = new FormData();
-      formData.append("picUrl", selectedFile);
-      formData.append("user_id", user.id);
-      formData.append("username", user.name);
-      formData.append("description", data.description);
-      formData.append("location", `${latitude}, ${longitude}`); // Using the captured location
-
+      setSubmitted(true);
       // console.log(Array.from(formData));
+      if (!activeAccount) throw "Account not active";
+
+      const reciept = await sendAndConfirmTransaction({
+        transaction: safeMint({
+          to: user.walletAddress,
+          uri: `${process.env.NEXT_PUBLIC_BASE_URL}/trees/${treeUUID}`,
+          contract: nftreeContract,
+        }),
+        account: activeAccount,
+      });
+
+      const trees = await pb.collection("trees").getFullList({
+        sort: "-tokenId",
+      });
+
+      const id: string = trees.length === 0 ? "-1" : trees[0].tokenId;
 
       // const createdRecordPosts = await pb.collection("posts").create(formData);
       const createdRecordTrees = await pb.collection("trees").create({
@@ -119,6 +155,8 @@ function Page() {
         user_id: user.id,
         type: data.type,
         name: data.name,
+        tree_uuid: treeUUID,
+        tokenId: parseInt(id) + 1,
       });
 
       const newFormData = new FormData();
@@ -130,7 +168,7 @@ function Page() {
         .collection("tree_images")
         .create(newFormData);
 
-      // TODO: redirect to individual tree page
+      router.push(`/trees/${treeUUID}`);
     }
   };
 
@@ -160,7 +198,12 @@ function Page() {
                 {isCaptureEnabled ? (
                   <>
                     <div className="mb-2">
-                      <Button onClick={() => setCaptureEnabled(false)}>
+                      <Button
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setCaptureEnabled(false);
+                        }}
+                      >
                         End
                       </Button>
                     </div>
@@ -173,8 +216,22 @@ function Page() {
                       />
                     </div>
                     <div className="flex gap-2">
-                      <Button onClick={capture}>Capture</Button>
-                      <Button onClick={toggleCamera}>Switch Camera</Button>
+                      <Button
+                        onClick={(e) => {
+                          e.preventDefault();
+                          capture();
+                        }}
+                      >
+                        Capture
+                      </Button>
+                      <Button
+                        onClick={(e) => {
+                          e.preventDefault();
+                          toggleCamera();
+                        }}
+                      >
+                        Switch Camera
+                      </Button>
                     </div>
                   </>
                 ) : (
@@ -239,16 +296,95 @@ function Page() {
               />
             </div>
 
-            <div className="flex flex-col w-full">
+            {submitted ? (
+              <>
+                <Button disabled>
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="1em"
+                    height="1em"
+                    viewBox="0 0 24 24"
+                  >
+                    <defs>
+                      <filter id="svgSpinnersGooeyBalls10">
+                        <feGaussianBlur
+                          in="SourceGraphic"
+                          result="y"
+                          stdDeviation="1.5"
+                        ></feGaussianBlur>
+                        <feColorMatrix
+                          in="y"
+                          result="z"
+                          values="1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 0 0 18 -7"
+                        ></feColorMatrix>
+                        <feBlend in="SourceGraphic" in2="z"></feBlend>
+                      </filter>
+                    </defs>
+                    <g
+                      fill="currentColor"
+                      filter="url(#svgSpinnersGooeyBalls10)"
+                    >
+                      <circle cx="4" cy="12" r="3">
+                        <animate
+                          attributeName="cx"
+                          calcMode="spline"
+                          dur="0.75s"
+                          keySplines=".56,.52,.17,.98;.56,.52,.17,.98"
+                          repeatCount="indefinite"
+                          values="4;9;4"
+                        ></animate>
+                        <animate
+                          attributeName="r"
+                          calcMode="spline"
+                          dur="0.75s"
+                          keySplines=".56,.52,.17,.98;.56,.52,.17,.98"
+                          repeatCount="indefinite"
+                          values="3;8;3"
+                        ></animate>
+                      </circle>
+                      <circle cx="15" cy="12" r="8">
+                        <animate
+                          attributeName="cx"
+                          calcMode="spline"
+                          dur="0.75s"
+                          keySplines=".56,.52,.17,.98;.56,.52,.17,.98"
+                          repeatCount="indefinite"
+                          values="15;20;15"
+                        ></animate>
+                        <animate
+                          attributeName="r"
+                          calcMode="spline"
+                          dur="0.75s"
+                          keySplines=".56,.52,.17,.98;.56,.52,.17,.98"
+                          repeatCount="indefinite"
+                          values="8;3;8"
+                        ></animate>
+                      </circle>
+                    </g>
+                  </svg>
+                </Button>
+              </>
+            ) : (
               <Button type="submit">Submit new tree</Button>
-              <span className="w-full flex justify-center">OR</span>
-              <Link
-                href="/update"
-                className={buttonVariants({ variant: "outline" })}
-              >
-                Update your existing tree
-              </Link>
-            </div>
+            )}
+            {/* <TransactionButton
+              transaction={() =>
+                safeMint({
+                  to: user.walletAddress,
+                  uri: `${process.env.NEXT_PUBLIC_BASE_URL}/trees/${treeUUID}`,
+                  contract: nftreeContract,
+                })
+              }
+              onTransactionConfirmed={() => {
+                form.handleSubmit(onSubmit);
+              }}
+              onError={(e) => {
+                alert(e);
+              }}
+              disabled={false}
+            >
+              Confirm Transaction
+            </TransactionButton> */}
           </form>
         </Form>
       </div>
